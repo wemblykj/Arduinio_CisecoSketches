@@ -1,5 +1,5 @@
 //////////////////////////////////////////////////////////////////////////
-// RFµ PIR Sensor
+// RFµ RGB LED Controller
 //
 //
 //
@@ -187,39 +187,40 @@ void loop() {
     {
       LLAP.sleepForaWhile(overrunTime);
       
-      // Switch off lights
-      digitalWrite(R_PIN, LOW);
-      digitalWrite(G_PIN, LOW);
-      digitalWrite(B_PIN, LOW);
-
       LLAP.sendMessage(F("OFF"));                  // the switch triggered send a message
 
-      delay(450);  
-      
-      pinMode(4, INPUT);                          // sleep the radio
+      //delay(450);  
+
+      // if switch still low then continue with sleep
+      if (digitalRead(SWITCH_PIN) == LOW)
+      {
+        // Switch off lights
+        digitalWrite(R_PIN, LOW);
+        digitalWrite(G_PIN, LOW);
+        digitalWrite(B_PIN, LOW);
+
+        pinMode(4, INPUT);                          // sleep the radio
     
-			if (digitalRead(SWITCH_PIN) == LOW)					// double check we should still sleep after overrun
-				LLAP.sleep(SWITCH_PIN, RISING, true);     // deep sleep until SWITCH causes interupt, with pullup
+			  LLAP.sleep(SWITCH_PIN, RISING, true);     // deep sleep until SWITCH causes interupt, with pullup
 
-      // WAKE UP ///
+        // WAKE UP ///
+        pinMode(4, OUTPUT);                         // wake the radio
 
-      pinMode(4, OUTPUT);                         // wake the radio
-      
-      // Switch on lights
-      digitalWrite(R_PIN, HIGH);
-      digitalWrite(G_PIN, HIGH);
-      digitalWrite(B_PIN, HIGH);
-      
-      battc++;                                    // increase battery count
+        // Switch on lights
+        digitalWrite(R_PIN, HIGH);
+        digitalWrite(G_PIN, HIGH);
+        digitalWrite(B_PIN, HIGH);
+
+        delay(450);                                 // give it time to wake up
   
-      delay(450);                                 // give it time to wake up
-  
-      LLAP.sendMessage(F("ON"));                  // the switch triggered send a message
-      
-      if (battc >= WAKEC) {                       // is it time to send a battery reading
+        battc++;                                    // increase battery count
+        if (battc >= WAKEC) {                       // is it time to send a battery reading
           battc = 0;
           LLAP.sendIntWithDP("BATT", int(readVcc()),3);    // read the battery voltage and send
+        }
       }
+      
+      LLAP.sendMessage(F("ON"));                  // the switch triggered send a message
     }
     else if (!debug)
     {
@@ -227,7 +228,6 @@ void loop() {
       //LLAP.sendMessage(F("IDLE"));
       LLAP.sleepForaWhile(idleTime);           // sleep for a little while before we go back to listening for messages
     }
-      
 }
 
 long readVcc() {
