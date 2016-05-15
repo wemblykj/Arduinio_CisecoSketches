@@ -20,6 +20,7 @@
 #define EEPROM_DEVICEID2 1
 #define EEPROM_IDLETIME 2
 #define EEPROM_OVERRUNTIME 6
+#define EEPROM_TIMEOUT 10
 
 #define SWITCH_PIN 2
 #define BUTTON_PIN 3
@@ -30,12 +31,15 @@
 #define WAKEC 10
 byte battc = 9;
 
-#define IDLETIME 50               // time in ms to block after a trigger
+#define IDLETIME 100              // time in ms to block after a trigger
 #define OVERRUNTIME 2000          // time to overrun before switching lights off
+#define TIMEOUT 600               // 600 = 10 mins
 
 bool debug = false;
 int idleTime = IDLETIME;
+long timeOut = TIMEOUT;
 int overrunTime = OVERRUNTIME;
+long timeOutCounter;
 
 String msg;        // storage for incoming message
 String reply;    // storage for reply
@@ -51,21 +55,27 @@ void setup() {
 
     delay(450);                     // allow the radio to startup
 
-    pinMode(SWITCH_PIN, INPUT_PULLUP);              // switch input pin
-    //pinMode(SWITCH_PIN, INPUT);              // switch input pin
-    //digitalWrite(SWITCH_PIN, HIGH);           // pullup
+    pinMode(SWITCH_PIN, INPUT);              // switch input pin
+    digitalWrite(SWITCH_PIN, LOW);           // pulldown
 
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    pinMode(BUTTON_PIN, INPUT);
+    digitalWrite(BUTTON_PIN, LOW);           // pulldown
     
+    // Default to on
+    if (digitalRead(SWITCH_PIN) == LOW) {
+      digitalWrite(R_PIN, LOW);
+      digitalWrite(G_PIN, LOW);
+      digitalWrite(B_PIN, LOW);
+    } else {
+      digitalWrite(R_PIN, HIGH);
+      digitalWrite(G_PIN, HIGH);
+      digitalWrite(B_PIN, HIGH);
+    }
+
     pinMode(R_PIN, OUTPUT);
     pinMode(G_PIN, OUTPUT);
     pinMode(B_PIN, OUTPUT);
 
-    // Default to on
-    digitalWrite(R_PIN, HIGH);
-    digitalWrite(G_PIN, HIGH);
-    digitalWrite(B_PIN, HIGH);
-  
     String permittedChars = "-#@?\\*ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     char deviceID[2];
     deviceID[0] = EEPROM.read(EEPROM_DEVICEID1);
@@ -88,18 +98,35 @@ void setup() {
     {
       overrunTime = OVERRUNTIME;
     }
-    
+
+    EEPROM.get(EEPROM_TIMEOUT, timeOut);
+    if (timeOut == -1)
+    {
+      timeOut = TIMEOUT;
+    }
+
+    //Serial.print("+++");            // enter AT command mode
+    //    delay(1500);                   // delay 1.5s
+    //    Serial.println("ATSM2");         // enable sleep mode 2 <0.5uA
+    //    delay(2000);
+    //    Serial.println("ATDN");          // exit AT command mode*/
+    //    delay(2000);
+        
     LLAP.init(deviceID);
     
     LLAP.sendMessage(F("STARTED"));
 
-    debug = digitalRead(BUTTON_PIN) == LOW;
+    debug = digitalRead(BUTTON_PIN) == HIGH;
     
     if (debug)
     {
       LLAP.sendMessage(String("IDLE")+idleTime);
       LLAP.sendMessage(String("ORUN")+overrunTime);
+      LLAP.sendMessage(String("TOUT")+timeOut);
     }
+
+    
+    timeOutCounter = timeOut*1000;
 }
 
 void loop() {
@@ -130,6 +157,7 @@ void loop() {
           EEPROM.write(EEPROM_DEVICEID2, LLAP.deviceId[1]);    // save the device ID
           EEPROM.put(EEPROM_IDLETIME, idleTime); 
           EEPROM.put(EEPROM_OVERRUNTIME, overrunTime); 
+          EEPROM.put(EEPROM_TIMEOUT, timeOut); 
       }
       else if (msg.compareTo("BATT-----") == 0)
       {
@@ -167,6 +195,22 @@ void loop() {
                 reply = "TOOLARGE";
         }
       }
+      else if (msg.startsWith("TOUT") == 0)
+      {
+        msg = msg.substring(4);
+        if (msg.startsWith("-"))
+        {    // read the value
+            reply = reply.substring(0,4) + (timeOut);
+        }
+        else
+        {    // set the value
+            int value = msg.toInt();
+            if (value >=0 && value <= 99999)
+                timeOut = value;
+            else
+                reply = "TOOLARGE";
+        }
+      }
       else
       {
         digitalWrite(R_PIN,HIGH);
@@ -187,47 +231,67 @@ void loop() {
     {
       LLAP.sleepForaWhile(overrunTime);
       
-      LLAP.sendMessage(F("OFF"));                  // the switch triggered send a message
-
       //delay(450);  
 
-      // if switch still low then continue with sleep
+      // if switch still HIGH then continue with sleep
       if (digitalRead(SWITCH_PIN) == LOW)
       {
-        // Switch off lights
-        digitalWrite(R_PIN, LOW);
-        digitalWrite(G_PIN, LOW);
-        digitalWrite(B_PIN, LOW);
-
-        pinMode(4, INPUT);                          // sleep the radio
-    
-			  LLAP.sleep(SWITCH_PIN, RISING, true);     // deep sleep until SWITCH causes interupt, with pullup
-
-        // WAKE UP ///
-        pinMode(4, OUTPUT);                         // wake the radio
-
-        // Switch on lights
-        digitalWrite(R_PIN, HIGH);
-        digitalWrite(G_PIN, HIGH);
-        digitalWrite(B_PIN, HIGH);
-
-        delay(450);                                 // give it time to wake up
-  
-        battc++;                                    // increase battery count
-        if (battc >= WAKEC) {                       // is it time to send a battery reading
-          battc = 0;
-          LLAP.sendIntWithDP("BATT", int(readVcc()),3);    // read the battery voltage and send
-        }
+        standby();
       }
-      
-      LLAP.sendMessage(F("ON"));                  // the switch triggered send a message
     }
     else if (!debug)
     {
-      debug = digitalRead(BUTTON_PIN) == LOW;
+      debug = digitalRead(BUTTON_PIN) == HIGH;
       //LLAP.sendMessage(F("IDLE"));
+      if (timeOutCounter > 0) {
+        timeOutCounter -= idleTime;
+
+        //LLAP.sendIntWithDP("TO", (timeOutCounter/1000), 6);
+        if (timeOutCounter <= 0) {
+          LLAP.sendMessage(F("TIMEOUT"));
+
+          standby();
+          //timeOutCounter = timeOut*1000;
+        }
+      }
+
+      //delay(idleTime);
       LLAP.sleepForaWhile(idleTime);           // sleep for a little while before we go back to listening for messages
     }
+}
+
+void standby() {
+  LLAP.sendMessage(F("OFF"));                  // the switch triggered send a message
+
+  delay(450);
+  
+  // Switch off lights
+  digitalWrite(R_PIN, LOW);
+  digitalWrite(G_PIN, LOW);
+  digitalWrite(B_PIN, LOW);
+
+  pinMode(4, INPUT);                          // sleep the radio
+
+  LLAP.sleep(SWITCH_PIN, RISING, false);     // deep sleep until SWITCH causes interupt
+
+  // WAKE UP ///
+  pinMode(4, OUTPUT);                         // wake the radio
+
+  // Switch on lights
+  digitalWrite(R_PIN, HIGH);
+  digitalWrite(G_PIN, HIGH);
+  digitalWrite(B_PIN, HIGH);
+
+  delay(450);                                 // give it time to wake up
+
+  battc++;                                    // increase battery count
+  if (battc >= WAKEC) {                       // is it time to send a battery reading
+    battc = 0;
+    LLAP.sendIntWithDP("BATT", int(readVcc()),3);    // read the battery voltage and send
+  }
+
+  LLAP.sendMessage(F("ON"));                  // the switch triggered send a message
+  timeOutCounter = timeOut*1000;
 }
 
 long readVcc() {
