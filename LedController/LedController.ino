@@ -1,3 +1,6 @@
+#include <Core.h>
+//#include <LLAPDispatcher.h>
+
 //////////////////////////////////////////////////////////////////////////
 // RFµ RGB LED Controller
 //
@@ -33,7 +36,7 @@ byte battc = 9;
 
 #define IDLETIME 100              // time in ms to block after a trigger
 #define OVERRUNTIME 2000          // time to overrun before switching lights off
-#define TIMEOUT 600               // 600 = 10 mins
+#define TIMEOUT 1200               // 1200 = 20 mins
 
 bool debug = false;
 int idleTime = IDLETIME;
@@ -41,14 +44,14 @@ long timeOut = TIMEOUT;
 int overrunTime = OVERRUNTIME;
 long timeOutCounter;
 
+//LLAPDispatcher::IController *dispatcher = nullptr;
+
 String msg;        // storage for incoming message
 String reply;    // storage for reply
 
 void setup() {
     pinMode(8, OUTPUT);             // pin 8 controls the radio
     digitalWrite(8, HIGH);          // select the radio
-
-    Serial.begin(115200);
 
     pinMode(4, OUTPUT);             // pin 4 controls the radio sleep
     digitalWrite(4, LOW);           // wake the radio
@@ -61,17 +64,6 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT);
     digitalWrite(BUTTON_PIN, LOW);           // pulldown
     
-    // Default to on
-    if (digitalRead(SWITCH_PIN) == LOW) {
-      digitalWrite(R_PIN, LOW);
-      digitalWrite(G_PIN, LOW);
-      digitalWrite(B_PIN, LOW);
-    } else {
-      digitalWrite(R_PIN, HIGH);
-      digitalWrite(G_PIN, HIGH);
-      digitalWrite(B_PIN, HIGH);
-    }
-
     pinMode(R_PIN, OUTPUT);
     pinMode(G_PIN, OUTPUT);
     pinMode(B_PIN, OUTPUT);
@@ -111,12 +103,27 @@ void setup() {
     //    delay(2000);
     //    Serial.println("ATDN");          // exit AT command mode*/
     //    delay(2000);
-        
+
+    debug = digitalRead(BUTTON_PIN) == HIGH;
+
+    if (debug) {
+      delay(10*1000);
+    }
+
+    Serial.begin(115200);
+
     LLAP.init(deviceID);
     
     LLAP.sendMessage(F("STARTED"));
 
-    debug = digitalRead(BUTTON_PIN) == HIGH;
+    // Set initial state
+    if (digitalRead(SWITCH_PIN) == LOW) {
+      LightsOff();
+    } else {
+      LightsOn();
+    }
+    
+    
     
     if (debug)
     {
@@ -127,6 +134,11 @@ void setup() {
 
     
     timeOutCounter = timeOut*1000;
+
+    //Core::Fred fred = 1;
+    //auto ll = new Core::ForwardLinkedList<int>();
+    //auto builder = new LLAPDispatcher::DispatcherBuilder();
+    //dispatcher = builder->build();
 }
 
 void loop() {
@@ -142,6 +154,10 @@ void loop() {
       if (msg.compareTo("HELLO----") == 0)
       {
           ;    // just echo the message back
+      }
+      else if (msg.compareTo("WAKE-----") == 0)
+      {
+          LightsOn();
       }
       else if (msg.compareTo("FVER-----") == 0)
       {
@@ -229,19 +245,20 @@ void loop() {
     }
     else if (digitalRead(SWITCH_PIN) == LOW)
     {
-      LLAP.sleepForaWhile(overrunTime);
+      //LLAP.sendMessage(F("STANDBY"));
+  
+      //LLAP.sleepForaWhile(overrunTime);
       
-      //delay(450);  
-
-      // if switch still HIGH then continue with sleep
+      // if switch still LOW then continue with sleep
       if (digitalRead(SWITCH_PIN) == LOW)
       {
-        standby();
+        Standby();
       }
     }
     else if (!debug)
     {
       debug = digitalRead(BUTTON_PIN) == HIGH;
+      
       //LLAP.sendMessage(F("IDLE"));
       if (timeOutCounter > 0) {
         timeOutCounter -= idleTime;
@@ -250,37 +267,26 @@ void loop() {
         if (timeOutCounter <= 0) {
           LLAP.sendMessage(F("TIMEOUT"));
 
-          standby();
-          //timeOutCounter = timeOut*1000;
+          LightsOff();
         }
       }
 
-      //delay(idleTime);
-      LLAP.sleepForaWhile(idleTime);           // sleep for a little while before we go back to listening for messages
+      delay(idleTime);
+      //LLAP.sleepForaWhile(idleTime);           // sleep for a little while before we go back to listening for messages
     }
 }
 
-void standby() {
-  LLAP.sendMessage(F("OFF"));                  // the switch triggered send a message
-
-  delay(450);
+void Standby() {
+  LightsOff();
   
-  // Switch off lights
-  digitalWrite(R_PIN, LOW);
-  digitalWrite(G_PIN, LOW);
-  digitalWrite(B_PIN, LOW);
-
+  //delay(450);
+  
   pinMode(4, INPUT);                          // sleep the radio
 
   LLAP.sleep(SWITCH_PIN, RISING, false);     // deep sleep until SWITCH causes interupt
 
   // WAKE UP ///
   pinMode(4, OUTPUT);                         // wake the radio
-
-  // Switch on lights
-  digitalWrite(R_PIN, HIGH);
-  digitalWrite(G_PIN, HIGH);
-  digitalWrite(B_PIN, HIGH);
 
   delay(450);                                 // give it time to wake up
 
@@ -290,10 +296,29 @@ void standby() {
     LLAP.sendIntWithDP("BATT", int(readVcc()),3);    // read the battery voltage and send
   }
 
+  LightsOn();
+}
+
+void LightsOff() {
+  LLAP.sendMessage(F("OFF"));                  // the switch triggered send a message
+
+  delay(450);
+  
+  // Switch off lights
+  digitalWrite(R_PIN, LOW);
+  digitalWrite(G_PIN, LOW);
+  digitalWrite(B_PIN, LOW);
+}
+
+void LightsOn() {
+  // Switch on lights
+  digitalWrite(R_PIN, HIGH);
+  digitalWrite(G_PIN, HIGH);
+  digitalWrite(B_PIN, HIGH);
+
   LLAP.sendMessage(F("ON"));                  // the switch triggered send a message
   timeOutCounter = timeOut*1000;
 }
-
 long readVcc() {
   long result;
   // Read 1.1V reference against AVcc
